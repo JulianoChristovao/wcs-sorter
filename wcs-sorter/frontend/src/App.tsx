@@ -28,6 +28,12 @@ function GestorRoute({ children }: { children: ReactNode }) {
   return <>{children}</>
 }
 
+function AdminRoute({ children }: { children: ReactNode }) {
+  const { isAdmin } = useAuth()
+  if (!isAdmin) return <Navigate to="/" replace />
+  return <>{children}</>
+}
+
 function AppRoutes() {
   return (
     <Routes>
@@ -43,7 +49,14 @@ function AppRoutes() {
         <Route index element={<Dashboard />} />
         <Route path="pedidos" element={<Pedidos />} />
         <Route path="mapeamento" element={<MapeamentoPage />} />
-        <Route path="logs" element={<Logs />} />
+        <Route
+          path="logs"
+          element={
+            <AdminRoute>
+              <Logs />
+            </AdminRoute>
+          }
+        />
         <Route
           path="usuarios"
           element={

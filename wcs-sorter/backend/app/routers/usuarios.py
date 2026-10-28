@@ -76,6 +76,13 @@ async def atualizar_usuario(
             detail="Apenas administradores podem definir papel admin",
         )
 
+    # Gestor não pode alterar usuário admin (desativar, papel, etc.)
+    if user.role == UserRole.admin and current_user.role != UserRole.admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Gestor não pode alterar usuário administrador",
+        )
+
     if payload.email is not None:
         user.email = payload.email
     if payload.nome_completo is not None:

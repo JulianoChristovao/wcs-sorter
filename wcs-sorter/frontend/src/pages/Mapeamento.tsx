@@ -208,6 +208,32 @@ export default function MapeamentoPage() {
     }
   }
 
+  const handleRemoverMapeamento = async (m: Mapeamento) => {
+    const label = m.valor || m.rota_codigo || String(m.id)
+    if (!window.confirm(`Remover o mapeamento "${label}" → saída ${m.saida_numero}?`)) {
+      return
+    }
+    try {
+      await mapeamentoApi.remove(m.id)
+      setMsg(`Mapeamento ${label} removido.`)
+      if (mapaId != null) await carregarConteudoDoMapa(mapaId)
+    } catch (err: unknown) {
+      const detail =
+        (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ||
+        'Erro ao remover mapeamento.'
+      setMsg(String(detail))
+    }
+  }
+
+  const carregarRotas = async () => {
+    try {
+      const { data } = await mapeamentoApi.rotas()
+      setRotas(data)
+    } catch {
+      /* ignore */
+    }
+  }
+
   const handleNovaRota = async (e: FormEvent) => {
     e.preventDefault()
     try {
@@ -215,13 +241,29 @@ export default function MapeamentoPage() {
         codigo: novaRota.codigo.toUpperCase(),
         descricao: novaRota.descricao,
       })
-      setMsg(`Rota ${novaRota.codigo.toUpperCase()} criada.`)
+      setMsg(`Sigla ${novaRota.codigo.toUpperCase()} cadastrada no catálogo.`)
       setNovaRota({ codigo: '', descricao: '' })
-      if (mapaId != null) await carregarConteudoDoMapa(mapaId)
+      await carregarRotas()
     } catch (err: unknown) {
       const detail =
         (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ||
         'Erro ao criar rota.'
+      setMsg(String(detail))
+    }
+  }
+
+  const handleExcluirRota = async (r: Rota) => {
+    if (!window.confirm(`Remover a sigla "${r.codigo}" do catálogo?\n(Os mapeamentos nos mapas não são apagados.)`)) {
+      return
+    }
+    try {
+      await mapeamentoApi.deleteRota(r.id)
+      setMsg(`Sigla ${r.codigo} removida do catálogo.`)
+      await carregarRotas()
+    } catch (err: unknown) {
+      const detail =
+        (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ||
+        'Erro ao excluir sigla.'
       setMsg(String(detail))
     }
   }
@@ -390,7 +432,7 @@ export default function MapeamentoPage() {
                     </button>
                   )
                 )}
-                {isAdmin && !m.habilitado && (
+                {isGestor && !m.habilitado && (
                   <button
                     type="button"
                     onClick={(e) => {
@@ -462,9 +504,22 @@ export default function MapeamentoPage() {
                           rotasNaSaida.map((mm) => (
                             <span
                               key={mm.id}
-                              className="inline-block bg-indigo-100 text-indigo-800 text-xs font-semibold px-2 py-0.5 rounded mr-1"
+                              className="inline-flex items-center gap-1 bg-indigo-100 text-indigo-800 text-xs font-semibold px-2 py-0.5 rounded mr-1 mb-1"
                             >
                               {mm.valor || mm.rota_codigo}
+                              {isGestor && (
+                                <button
+                                  type="button"
+                                  title="Remover deste mapa"
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    void handleRemoverMapeamento(mm)
+                                  }}
+                                  className="ml-0.5 text-indigo-500 hover:text-red-600 font-bold leading-none"
+                                >
+                                  ×
+                                </button>
+                              )}
                             </span>
                           ))
                         )}
@@ -476,93 +531,169 @@ export default function MapeamentoPage() {
             )}
           </div>
 
-          <form
-            onSubmit={handleMapear}
-            className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm flex flex-wrap items-end gap-4"
-          >
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">
-                Valor ({mapaAtual.criterio_roteamento})
-              </label>
-              <input
-                required
-                value={form.valor}
-                onChange={(e) => setForm({ ...form, valor: e.target.value })}
-                className="border border-slate-300 rounded-lg px-3 py-2 text-sm min-w-[160px]"
-                placeholder={
-                  mapaAtual.criterio_roteamento === 'sigla'
-                    ? 'SAO'
-                    : mapaAtual.criterio_roteamento === 'uf'
-                      ? 'SP'
-                      : 'Braz'
-                }
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">Saída</label>
-              <select
-                value={form.saida_numero}
-                onChange={(e) => setForm({ ...form, saida_numero: Number(e.target.value) })}
-                className="border border-slate-300 rounded-lg px-3 py-2 text-sm"
-              >
-                {Array.from({ length: qtdSaidas }, (_, i) => i + 1).map((num) => (
-                  <option key={num} value={num}>
-                    Saída {num}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <button
-              type="submit"
-              className="bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-4 py-2 rounded-lg"
-            >
-              Mapear valor → saída
-            </button>
-          </form>
-
-          {isGestor && (
+          {isGestor ? (
             <form
-              onSubmit={handleNovaRota}
+              onSubmit={handleMapear}
               className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm flex flex-wrap items-end gap-4"
             >
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">
-                  Código da rota
+                  Valor ({mapaAtual.criterio_roteamento})
                 </label>
-                <input
-                  required
-                  value={novaRota.codigo}
-                  onChange={(e) => setNovaRota({ ...novaRota, codigo: e.target.value })}
-                  className="border border-slate-300 rounded-lg px-3 py-2 text-sm uppercase w-28"
-                  placeholder="FLN"
-                />
+                {mapaAtual.criterio_roteamento === 'sigla' ? (
+                  <select
+                    required
+                    value={form.valor}
+                    onChange={(e) => setForm({ ...form, valor: e.target.value })}
+                    className="border border-slate-300 rounded-lg px-3 py-2 text-sm min-w-[160px]"
+                  >
+                    <option value="">Selecione a sigla cadastrada</option>
+                    {rotas.map((r) => (
+                      <option key={r.id} value={r.codigo}>
+                        {r.codigo} — {r.descricao}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <input
+                    required
+                    value={form.valor}
+                    onChange={(e) => setForm({ ...form, valor: e.target.value })}
+                    className="border border-slate-300 rounded-lg px-3 py-2 text-sm min-w-[160px]"
+                    placeholder={
+                      mapaAtual.criterio_roteamento === 'uf' ? 'SP' : 'Braz'
+                    }
+                  />
+                )}
+                {mapaAtual.criterio_roteamento === 'sigla' && rotas.length === 0 && (
+                  <p className="text-xs text-amber-600 mt-1">
+                    Cadastre siglas abaixo antes de mapear.
+                  </p>
+                )}
               </div>
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Descrição</label>
-                <input
-                  required
-                  value={novaRota.descricao}
-                  onChange={(e) => setNovaRota({ ...novaRota, descricao: e.target.value })}
-                  className="border border-slate-300 rounded-lg px-3 py-2 text-sm min-w-[200px]"
-                  placeholder="Florianópolis"
-                />
+                <label className="block text-sm font-medium text-slate-700 mb-1">Saída</label>
+                <select
+                  value={form.saida_numero}
+                  onChange={(e) => setForm({ ...form, saida_numero: Number(e.target.value) })}
+                  className="border border-slate-300 rounded-lg px-3 py-2 text-sm"
+                >
+                  {Array.from({ length: qtdSaidas }, (_, i) => i + 1).map((num) => (
+                    <option key={num} value={num}>
+                      Saída {num}
+                    </option>
+                  ))}
+                </select>
               </div>
               <button
                 type="submit"
-                className="bg-emerald-600 hover:bg-emerald-700 text-white text-sm px-4 py-2 rounded-lg"
+                className="bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-4 py-2 rounded-lg"
               >
-                Criar rota
+                Mapear valor → saída
               </button>
             </form>
+          ) : (
+            <p className="text-sm text-slate-500 bg-slate-50 border border-slate-200 rounded-lg px-4 py-3">
+              Modo consulta: operador visualiza mapas e roteamentos, sem permissão para incluir ou alterar.
+            </p>
           )}
 
+          {/* Catálogo de siglas — independente do mapeamento no mapa */}
           <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
+            <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between flex-wrap gap-2">
+              <div>
+                <h3 className="text-sm font-semibold text-slate-800">Cadastro de siglas</h3>
+                <p className="text-xs text-slate-500">
+                  Catálogo auxiliar. Mapear no mapa acima não cadastra aqui automaticamente.
+                </p>
+              </div>
+            </div>
+            {isGestor && (
+              <form
+                onSubmit={handleNovaRota}
+                className="px-4 py-3 border-b border-slate-100 flex flex-wrap items-end gap-3 bg-slate-50"
+              >
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">Código</label>
+                  <input
+                    required
+                    value={novaRota.codigo}
+                    onChange={(e) => setNovaRota({ ...novaRota, codigo: e.target.value })}
+                    className="border border-slate-300 rounded-lg px-3 py-2 text-sm uppercase w-28"
+                    placeholder="FLN"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">Descrição</label>
+                  <input
+                    required
+                    value={novaRota.descricao}
+                    onChange={(e) => setNovaRota({ ...novaRota, descricao: e.target.value })}
+                    className="border border-slate-300 rounded-lg px-3 py-2 text-sm min-w-[200px]"
+                    placeholder="Florianópolis"
+                  />
+                </div>
+                <button
+                  type="submit"
+                  className="bg-emerald-600 hover:bg-emerald-700 text-white text-sm px-4 py-2 rounded-lg"
+                >
+                  Cadastrar sigla
+                </button>
+              </form>
+            )}
+            <table className="w-full text-sm">
+              <thead className="bg-slate-50 text-left text-slate-600">
+                <tr>
+                  <th className="px-4 py-2 font-medium">Código</th>
+                  <th className="px-4 py-2 font-medium">Descrição</th>
+                  {isGestor && <th className="px-4 py-2 font-medium text-right">Ações</th>}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {rotas.map((r) => (
+                  <tr key={r.id} className="hover:bg-slate-50">
+                    <td className="px-4 py-2 font-semibold text-emerald-700">{r.codigo}</td>
+                    <td className="px-4 py-2 text-slate-600">{r.descricao}</td>
+                    {isGestor && (
+                      <td className="px-4 py-2 text-right">
+                        <button
+                          type="button"
+                          onClick={() => void handleExcluirRota(r)}
+                          className="text-xs text-red-600 hover:text-red-800 font-medium"
+                        >
+                          Excluir
+                        </button>
+                      </td>
+                    )}
+                  </tr>
+                ))}
+                {rotas.length === 0 && (
+                  <tr>
+                    <td colSpan={isGestor ? 3 : 2} className="px-4 py-6 text-center text-slate-400 text-sm">
+                      Nenhuma sigla no catálogo.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
+            <div className="px-4 py-3 border-b border-slate-100">
+              <h3 className="text-sm font-semibold text-slate-800">Programação deste mapa</h3>
+              <p className="text-xs text-slate-500">
+                Valores mapeados para saídas. Apagar aqui remove só do mapa, não do cadastro de siglas.
+              </p>
+            </div>
             <table className="w-full text-sm">
               <thead className="bg-slate-50 text-left text-slate-600">
                 <tr>
                   <th className="px-4 py-3 font-medium">Valor</th>
                   <th className="px-4 py-3 font-medium">Descrição</th>
                   <th className="px-4 py-3 font-medium">Saída</th>
+                  {isGestor && (
+                    <th className="px-4 py-3 font-medium text-right">Ações</th>
+                  )}
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -575,11 +706,22 @@ export default function MapeamentoPage() {
                         {m.saida_numero}
                       </span>
                     </td>
+                    {isGestor && (
+                      <td className="px-4 py-3 text-right">
+                        <button
+                          type="button"
+                          onClick={() => void handleRemoverMapeamento(m)}
+                          className="text-xs text-red-600 hover:text-red-800 font-medium px-2 py-1 rounded hover:bg-red-50"
+                        >
+                          Apagar
+                        </button>
+                      </td>
+                    )}
                   </tr>
                 ))}
                 {mapeamentos.length === 0 && !loadingMapa && (
                   <tr>
-                    <td colSpan={3} className="px-4 py-8 text-center text-slate-400">
+                    <td colSpan={isGestor ? 4 : 3} className="px-4 py-8 text-center text-slate-400">
                       Nenhum mapeamento neste mapa.
                     </td>
                   </tr>

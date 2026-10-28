@@ -206,12 +206,16 @@ export default function Usuarios() {
                     </span>
                   </td>
                   <td className="px-4 py-3">
-                    <button
-                      onClick={() => toggleAtivo(u)}
-                      className="text-xs text-blue-600 hover:underline"
-                    >
-                      {u.ativo ? 'Desativar' : 'Ativar'}
-                    </button>
+                    {u.role === 'admin' && !isAdmin ? (
+                      <span className="text-xs text-slate-400">—</span>
+                    ) : (
+                      <button
+                        onClick={() => toggleAtivo(u)}
+                        className="text-xs text-blue-600 hover:underline"
+                      >
+                        {u.ativo ? 'Desativar' : 'Ativar'}
+                      </button>
+                    )}
                   </td>
                 </tr>
               ))

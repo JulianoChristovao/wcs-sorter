@@ -5,7 +5,7 @@ const navItems = [
   { to: '/', label: 'Dashboard', roles: ['admin', 'gestor', 'operador'] },
   { to: '/pedidos', label: 'Pedidos', roles: ['admin', 'gestor', 'operador'] },
   { to: '/mapeamento', label: 'Mapeamento', roles: ['admin', 'gestor', 'operador'] },
-  { to: '/logs', label: 'Logs', roles: ['admin', 'gestor', 'operador'] },
+  { to: '/logs', label: 'Logs', roles: ['admin'] },
   { to: '/usuarios', label: 'Usuários', roles: ['admin', 'gestor'] },
 ]
 
@@ -71,9 +71,19 @@ export default function Layout() {
             <h2 className="text-lg font-semibold text-slate-800">
               Sistema de Controle de Armazém
             </h2>
-            {isGestor && (
+            {user?.role === 'admin' && (
+              <span className="text-xs bg-purple-100 text-purple-800 px-2 py-1 rounded-full font-medium">
+                Acesso Admin
+              </span>
+            )}
+            {user?.role === 'gestor' && (
               <span className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded-full font-medium">
-                Acesso Gestor+
+                Acesso Gestor
+              </span>
+            )}
+            {user?.role === 'operador' && (
+              <span className="text-xs bg-slate-100 text-slate-600 px-2 py-1 rounded-full font-medium">
+                Acesso Operador
               </span>
             )}
           </div>

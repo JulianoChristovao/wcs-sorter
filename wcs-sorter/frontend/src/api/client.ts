@@ -101,6 +101,7 @@ export const mapeamentoApi = {
     api.put<ConfigSorter>('/mapeamento/config', data),
   createRota: (data: { codigo: string; descricao: string }) =>
     api.post<Rota>('/mapeamento/rotas', data),
+  deleteRota: (id: number) => api.delete(`/mapeamento/rotas/${id}`),
 }
 
 export const usuariosApi = {

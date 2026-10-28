@@ -8,7 +8,7 @@ from sqlalchemy import select, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.core.security import require_operador, require_gestor
+from app.core.security import require_admin
 from app.models.usuario import Usuario
 from app.models.log import LogSorter, LogIntegracaoWms
 from app.schemas.logs import LogSorterResponse, LogWmsResponse, LogsPage
@@ -24,7 +24,7 @@ async def listar_logs_sorter(
     page: int = Query(1, ge=1),
     size: int = Query(30, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
-    current_user: Usuario = Depends(require_operador),
+    current_user: Usuario = Depends(require_admin),
 ):
     filters = []
     if sucesso is not None:
@@ -79,7 +79,7 @@ async def listar_logs_wms(
     page: int = Query(1, ge=1),
     size: int = Query(30, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
-    current_user: Usuario = Depends(require_gestor),
+    current_user: Usuario = Depends(require_admin),
 ):
     from sqlalchemy import func
 

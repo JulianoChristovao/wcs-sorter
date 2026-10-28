@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.database import get_db
-from app.core.security import require_operador, require_gestor
+from app.core.security import require_operador, require_gestor, require_admin
 from app.models.usuario import Usuario
 from app.models.pedido import Pedido, PedidoStatus, PedidoEtiqueta, ConfirmacaoSorter
 from app.models.log import LogIntegracaoWms
@@ -177,7 +177,7 @@ async def excluir_pedido(
         description="Se true, permite excluir mesmo já separado/enviado ao WMS",
     ),
     db: AsyncSession = Depends(get_db),
-    current_user: Usuario = Depends(require_gestor),
+    current_user: Usuario = Depends(require_admin),
 ):
     result = await db.execute(select(Pedido).where(Pedido.id == pedido_id))
     pedido = result.scalar_one_or_none()

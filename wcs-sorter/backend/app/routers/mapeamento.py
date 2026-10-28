@@ -162,7 +162,7 @@ async def desabilitar_mapa(
 async def excluir_mapa(
     mapa_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: Usuario = Depends(require_admin),
+    current_user: Usuario = Depends(require_gestor),
 ):
     result = await db.execute(select(Mapa).where(Mapa.id == mapa_id))
     mapa = result.scalar_one_or_none()
@@ -240,13 +240,16 @@ async def listar_saidas(
     return result.scalars().all()
 
 
-# ---------- Rotas ----------
+# ---------- Rotas (catálogo de siglas — independente do mapeamento no mapa) ----------
 @router.get("/rotas", response_model=list[RotaResponse])
 async def listar_rotas(
     db: AsyncSession = Depends(get_db),
     current_user: Usuario = Depends(require_operador),
 ):
-    result = await db.execute(select(Rota).order_by(Rota.codigo))
+    """Lista apenas siglas ativas do catálogo."""
+    result = await db.execute(
+        select(Rota).where(Rota.ativo.is_(True)).order_by(Rota.codigo)
+    )
     return result.scalars().all()
 
 
@@ -256,14 +259,51 @@ async def criar_rota(
     db: AsyncSession = Depends(get_db),
     current_user: Usuario = Depends(require_gestor),
 ):
-    exists = await db.execute(select(Rota).where(Rota.codigo == payload.codigo.upper()))
-    if exists.scalar_one_or_none():
-        raise HTTPException(status_code=400, detail="Código de rota já existe")
-    rota = Rota(codigo=payload.codigo.upper(), descricao=payload.descricao)
+    """
+    Cadastra sigla no catálogo.
+    Se já existia inativa (foi excluída), reativa e atualiza a descrição.
+    NÃO cria mapeamento em nenhum mapa.
+    """
+    codigo = payload.codigo.strip().upper()
+    if not codigo:
+        raise HTTPException(status_code=400, detail="Código da rota é obrigatório")
+
+    result = await db.execute(select(Rota).where(Rota.codigo == codigo))
+    existente = result.scalar_one_or_none()
+
+    if existente:
+        if existente.ativo:
+            raise HTTPException(status_code=400, detail="Código de rota já existe")
+        # Reativa registro previamente excluído
+        existente.ativo = True
+        existente.descricao = payload.descricao
+        await db.flush()
+        await db.refresh(existente)
+        return existente
+
+    rota = Rota(codigo=codigo, descricao=payload.descricao, ativo=True)
     db.add(rota)
     await db.flush()
     await db.refresh(rota)
     return rota
+
+
+@router.delete("/rotas/{rota_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def excluir_rota(
+    rota_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: Usuario = Depends(require_gestor),
+):
+    """
+    Remove sigla do catálogo (soft-delete).
+    Não remove mapeamentos já feitos nos mapas — apenas desvincula a descrição do catálogo.
+    """
+    result = await db.execute(select(Rota).where(Rota.id == rota_id))
+    rota = result.scalar_one_or_none()
+    if not rota:
+        raise HTTPException(status_code=404, detail="Rota não encontrada")
+    rota.ativo = False
+    await db.flush()
 
 
 
@@ -359,7 +399,7 @@ async def listar_mapeamentos(
 async def criar_ou_atualizar_mapeamento(
     payload: MapeamentoCreate,
     db: AsyncSession = Depends(get_db),
-    current_user: Usuario = Depends(require_operador),
+    current_user: Usuario = Depends(require_gestor),
 ):
     result_mapa = await db.execute(select(Mapa).where(Mapa.id == payload.mapa_id))
     mapa = result_mapa.scalar_one_or_none()
@@ -394,10 +434,21 @@ async def criar_ou_atualizar_mapeamento(
             detail=f"Saída {payload.saida_numero} acima do limite do mapa ({mapa.quantidade_saidas})",
         )
 
-    # Catálogo opcional de rotas
-    rota = None
-    result_rota = await db.execute(select(Rota).where(Rota.codigo == valor))
+    # Catálogo: NUNCA cria rota aqui.
+    # Se o mapa for por SIGLA, o valor precisa existir no cadastro de siglas.
+    result_rota = await db.execute(
+        select(Rota).where(and_(Rota.codigo == valor, Rota.ativo.is_(True)))
+    )
     rota = result_rota.scalar_one_or_none()
+
+    if criterio == "sigla" and rota is None:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Sigla '{valor}' não existe no cadastro de siglas. "
+                "Cadastre-a primeiro em 'Cadastro de siglas' e depois mapeie no mapa."
+            ),
+        )
 
     result_existente = await db.execute(
         select(MapeamentoRotaSaida).where(
@@ -441,16 +492,18 @@ async def criar_ou_atualizar_mapeamento(
     )
 
 
+@router.delete("/{mapeamento_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def remover_mapeamento(
     mapeamento_id: int,
     db: AsyncSession = Depends(get_db),
     current_user: Usuario = Depends(require_gestor),
 ):
+    """Remove definitivamente o mapeamento valor → saída do mapa."""
     result = await db.execute(
         select(MapeamentoRotaSaida).where(MapeamentoRotaSaida.id == mapeamento_id)
     )
     mapeamento = result.scalar_one_or_none()
     if not mapeamento:
         raise HTTPException(status_code=404, detail="Mapeamento não encontrado")
-    mapeamento.ativo = False
-    mapeamento.updated_by = current_user.id
+    await db.delete(mapeamento)
+    await db.flush()

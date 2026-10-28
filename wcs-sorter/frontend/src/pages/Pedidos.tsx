@@ -14,7 +14,7 @@ const statusColors: Record<string, string> = {
 }
 
 export default function Pedidos() {
-  const { isGestor } = useAuth()
+  const { isAdmin } = useAuth()
   const [items, setItems] = useState<Pedido[]>([])
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(1)
@@ -107,12 +107,16 @@ export default function Pedidos() {
     <div className="space-y-5">
       <div className="flex items-center justify-between flex-wrap gap-3">
         <h1 className="text-xl font-bold text-slate-800">Pedidos</h1>
-        <button
-          onClick={() => setShowForm(!showForm)}
-          className="bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-4 py-2 rounded-lg"
-        >
-          {showForm ? 'Cancelar' : '+ Novo pedido (simular WMS)'}
-        </button>
+        {isAdmin ? (
+          <button
+            onClick={() => setShowForm(!showForm)}
+            className="bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-4 py-2 rounded-lg"
+          >
+            {showForm ? 'Cancelar' : '+ Novo pedido (simular WMS)'}
+          </button>
+        ) : (
+          <span className="text-sm text-slate-500">Modo consulta</span>
+        )}
       </div>
 
       {msg && (
@@ -121,7 +125,7 @@ export default function Pedidos() {
         </div>
       )}
 
-      {showForm && (
+      {showForm && isAdmin && (
         <form
           onSubmit={handleCreate}
           className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm grid grid-cols-1 sm:grid-cols-2 gap-4"
@@ -246,7 +250,7 @@ export default function Pedidos() {
               <th className="px-4 py-3 font-medium">Peso</th>
               <th className="px-4 py-3 font-medium">Saída</th>
               <th className="px-4 py-3 font-medium">Criado em</th>
-              {isGestor && <th className="px-4 py-3 font-medium"></th>}
+              {isAdmin && <th className="px-4 py-3 font-medium"></th>}
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
@@ -306,7 +310,7 @@ export default function Pedidos() {
                   <td className="px-4 py-3 text-slate-500">
                     {new Date(p.created_at).toLocaleString('pt-BR')}
                   </td>
-                  {isGestor && (
+                  {isAdmin && (
                     <td className="px-4 py-3">
                       <button
                         type="button"
