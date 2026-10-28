@@ -18,7 +18,7 @@ No Soap Ui:
 Header = X-API-Key
 Value = sorter-api-key-change-me
 
-https://grok.com/project/f46145e8-0a4e-4877-b8b7-b76993d0be74?tab=conversations&chat=ede0d570-0a74-4ff8-a600-96dc768133e8
+
 http://localhost:8000/docs#
 http://localhost:5173/login
 http://localhost:8000/health
