@@ -314,3 +314,8 @@ class SorterService:
             mensagem=mensagem,
         )
         self.db.add(log)
+        await self.db.flush()
+        # Em falha a API sobe HTTPException e o get_db faz rollback.
+        # Commit imediato garante que o log de erro permaneça para o dashboard.
+        if not sucesso:
+            await self.db.commit()

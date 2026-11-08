@@ -272,26 +272,28 @@ export default function Pedidos() {
                   <td className="px-4 py-3 font-mono font-medium">{p.etiqueta}</td>
                   <td className="px-4 py-3 text-slate-500">{p.codigo_externo || '—'}</td>
                   <td className="px-4 py-3 text-xs">
-                    {p.sigla && (
-                      <span className="bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded font-medium mr-1">
-                        {p.sigla}
-                      </span>
-                    )}
-                    {p.uf && (
-                      <span className="bg-sky-50 text-sky-700 px-2 py-0.5 rounded font-medium mr-1">
-                        {p.uf}
-                      </span>
-                    )}
-                    {p.filial && (
-                      <span className="bg-amber-50 text-amber-800 px-2 py-0.5 rounded font-medium mr-1">
-                        {p.filial}
-                      </span>
-                    )}
-                    {!p.sigla && !p.uf && !p.filial && (
-                      <span className="bg-slate-100 text-slate-600 px-2 py-0.5 rounded">
-                        {p.rota_codigo}
-                      </span>
-                    )}
+                    <div className="flex flex-wrap items-center gap-1">
+                      {p.sigla && (
+                        <span className="bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded font-medium whitespace-nowrap">
+                          {p.sigla}
+                        </span>
+                      )}
+                      {p.uf && (
+                        <span className="bg-sky-50 text-sky-700 px-2 py-0.5 rounded font-medium whitespace-nowrap">
+                          {p.uf}
+                        </span>
+                      )}
+                      {p.filial && (
+                        <span className="bg-amber-50 text-amber-800 px-2 py-0.5 rounded font-medium whitespace-nowrap">
+                          {p.filial}
+                        </span>
+                      )}
+                      {!p.sigla && !p.uf && !p.filial && (
+                        <span className="bg-slate-100 text-slate-600 px-2 py-0.5 rounded whitespace-nowrap">
+                          {p.rota_codigo}
+                        </span>
+                      )}
+                    </div>
                   </td>
                   <td className="px-4 py-3">
                     <span

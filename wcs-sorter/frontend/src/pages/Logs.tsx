@@ -6,7 +6,7 @@ import { useAuth } from '../context/AuthContext'
 type Tab = 'sorter' | 'wms'
 
 export default function LogsPage() {
-  const { isGestor } = useAuth()
+  const { isGestor, isAdmin } = useAuth()
   const [tab, setTab] = useState<Tab>('sorter')
   const [sorterLogs, setSorterLogs] = useState<LogSorter[]>([])
   const [wmsLogs, setWmsLogs] = useState<LogWms[]>([])
@@ -46,13 +46,13 @@ export default function LogsPage() {
   }
 
   useEffect(() => {
-    if (tab === 'wms' && !isGestor) {
+    if (tab === 'wms' && !isAdmin) {
       setTab('sorter')
       return
     }
     load()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tab, page, onlyErrors, isGestor])
+  }, [tab, page, onlyErrors, isAdmin])
 
   return (
     <div className="space-y-5">
@@ -95,7 +95,7 @@ export default function LogsPage() {
         >
           Sorter
         </button>
-        {isGestor && (
+        {isAdmin && (
           <button
             type="button"
             onClick={() => {

@@ -504,7 +504,8 @@ export default function MapeamentoPage() {
                           rotasNaSaida.map((mm) => (
                             <span
                               key={mm.id}
-                              className="inline-flex items-center gap-1 bg-indigo-100 text-indigo-800 text-xs font-semibold px-2 py-0.5 rounded mr-1 mb-1"
+                              className="inline-flex items-center gap-1 bg-indigo-100 text-indigo-800 text-xs font-semibold px-2 py-0.5 rounded mr-1 mb-1 max-w-full whitespace-nowrap"
+                              title={mm.valor || mm.rota_codigo || ''}
                             >
                               {mm.valor || mm.rota_codigo}
                               {isGestor && (

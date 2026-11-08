@@ -94,8 +94,13 @@ export interface DashboardKpis {
   separados_hoje: number
   por_status: Record<string, number>
   consultas_24h: number
+  consultas_ok_24h?: number
+  consultas_erro_24h?: number
   taxa_sucesso_percent: number
   tempo_medio_resposta_ms: number
+  periodo_inicio?: string
+  periodo_fim?: string
+  separados_periodo?: number
   atualizado_em: string
 }
 

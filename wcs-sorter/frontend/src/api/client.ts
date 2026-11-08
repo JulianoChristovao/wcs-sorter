@@ -49,7 +49,8 @@ export const authApi = {
 }
 
 export const dashboardApi = {
-  kpis: () => api.get<DashboardKpis>('/dashboard/kpis'),
+  kpis: (params?: { inicio?: string; fim?: string }) =>
+    api.get<DashboardKpis>('/dashboard/kpis', { params }),
 }
 
 export const pedidosApi = {

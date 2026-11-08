@@ -135,14 +135,17 @@ class WmsService:
         if sucesso:
             pedido.status = PedidoStatus.enviado_wms
 
-        self.db.add(
-            LogIntegracaoWms(
-                pedido_id=pedido.id,
-                tipo="confirmacao_enviada",
-                payload=payload,
-                resposta=resposta,
-                sucesso=sucesso,
-                mensagem_erro=mensagem_erro,
-            )
+        log = LogIntegracaoWms(
+            pedido_id=pedido.id,
+            tipo="confirmacao_enviada" if sucesso else "confirmacao_erro",
+            payload=payload,
+            resposta=resposta,
+            sucesso=sucesso,
+            mensagem_erro=mensagem_erro,
         )
+        self.db.add(log)
+        await self.db.flush()
+        # Garante que log de falha não suma se houver rollback posterior
+        if not sucesso:
+            await self.db.commit()
         return sucesso
