@@ -1,103 +1,79 @@
 # Arquitetura do WCS Sorter
 
-## Visão Geral
+Documento resumido no repositório. A entrega acadêmica completa está na E2 (Arquitetura, Domínio e Dados).
 
-O **WCS (Warehouse Control System)** atua como camada intermediária entre o **WMS** (Warehouse Management System) do cliente e o equipamento de automação (**Sorter**).
+## Visão geral
+
+O **WCS (Warehouse Control System)** é a camada intermediária entre o WMS (origem dos pedidos) e o sorter (automação física). Não controla PLC nem substitui o WMS.
 
 ```
-┌─────────────┐         REST API          ┌──────────────────────┐
-│    WMS      │ ─────────────────────────► │                      │
-│  (Cliente)  │ ◄───────────────────────── │   WCS (este sistema) │
-└─────────────┘   Confirmação separação    │                      │
-                                           │  ┌────────────────┐  │
-                                           │  │  PostgreSQL    │  │
-                                           │  └────────────────┘  │
-                                           │                      │
-┌─────────────┐   POST /consultar          │                      │
-│   SORTER    │ ─────────────────────────► │                      │
-│ (Automação) │ ◄───────────────────────── │                      │
-│             │   { codigo, saida }        │                      │
-│             │                            │                      │
-│             │   POST /confirmar          │                      │
-│             │ ─────────────────────────► │                      │
-└─────────────┘                            └──────────────────────┘
+WMS  --POST /api/v1/pedidos-->  WCS  <--POST /api/v1/sorter/consultar--  Sorter
+WMS  <--webhook confirmação--   WCS  <--POST /api/v1/sorter/confirmar--  Sorter
 ```
 
-## Camadas
+## Camadas e dependências
 
-| Camada              | Tecnologia              | Responsabilidade                                      |
-|---------------------|-------------------------|-------------------------------------------------------|
-| API REST            | FastAPI + Uvicorn       | Endpoints síncronos de baixa latência                 |
-| Regras de negócio   | Services (Python)       | Decisão de roteamento, confirmação, notificação WMS |
-| Persistência        | SQLAlchemy 2 + asyncpg  | Modelagem e acesso ao PostgreSQL                      |
-| Banco de dados      | PostgreSQL 16           | Dados transacionais + JSONB                           |
-| Autenticação        | JWT (python-jose)       | Controle de acesso por papéis (RBAC)                  |
-| Integração WMS      | httpx (async)           | Webhook de confirmação                                |
+```
+routers (FastAPI) --> services --> domain <-- infrastructure (memória / futuro SQL)
+                                      ^
+                    entidades, decidir_rota, porta PedidoRepository
+                    (sem ORM, sem HTTP, sem Pydantic)
+```
 
-## Fluxo Principal do Sorter
+| Camada | Pacote | Responsabilidade |
+|--------|--------|------------------|
+| HTTP | `app/routers` | Validação de entrada, auth, status HTTP |
+| Aplicação | `app/services` | Orquestra: DTO → persistência → domínio → logs / webhook |
+| Domínio | `app/domain` | `Pedido`, `Mapa`, `Criterio`, `decidir_rota`, erros, porta `PedidoRepository` |
+| Persistência | `app/models` + `app/infrastructure` | SQLAlchemy em `models`; adaptador em memória em `infrastructure/memory_repository.py` (testes). **Não há** repositório SQL da porta ainda: o `SorterService` consulta o banco e converte para entidades de domínio antes de `decidir_rota`. |
+| Core | `app/core` | Sessão async, JWT, API Key, config |
 
-1. **Indução / Leitura**  
-   O sorter lê todos os códigos de barras da caixa e envia:
-   ```json
-   { "etiqueta": "ABC1234;FFFF45678;123456789" }
-   ```
+## Domínio (implementado)
 
-2. **Consulta ao WCS** (`POST /api/v1/sorter/consultar`)  
-   - O WCS busca nos pedidos pendentes qual código é conhecido.  
-   - Resolve a **rota** do pedido (ex: `SAO`).  
-   - Consulta o **mapeamento** rota → saída.  
-   - Retorna:
-     ```json
-     { "codigo": "FFFF45678", "saida": 1 }
-     ```
+- `app/domain/entities.py` — Pedido, Mapa, Criterio, Decisao, `habilitar_mapa`
+- `app/domain/routing.py` — `decidir_rota` / `consultar` (função pura)
+- `app/domain/ports.py` — `PedidoRepository` (Protocol)
+- `app/domain/errors.py` — erros de negócio
+- Testes: `backend/tests/domain/test_routing.py` (9 testes; `pytest tests/domain -q`)
 
-3. **Separação física**  
-   O sorter desvia a caixa para a rampa indicada.
+## Estados do pedido
 
-4. **Confirmação** (`POST /api/v1/sorter/confirmar`)  
-   ```json
-   {
-     "codigo": "FFFF45678",
-     "altura": 15.2,
-     "largura": 21.5,
-     "comprimento": 25.4,
-     "peso": 2.23,
-     "saida": 1
-   }
-   ```
-   - Grava a confirmação com as medidas.  
-   - Atualiza o status do pedido para `separado`.  
-   - Dispara notificação assíncrona ao WMS.
+Enum: `recebido`, `pendente`, `em_processamento`, `separado`, `enviado_wms`, `erro`, `cancelado`.
 
-## Papéis de Usuário (RBAC)
+Fluxo principal: pedido criado pelo WMS entra como **`pendente`** (`WmsService.receber_pedido`) → `em_processamento` (após consulta) → `separado` (após confirmação) → `enviado_wms` (após notificação com sucesso).  
+`recebido` existe no enum e é aceito na consulta do sorter junto com `pendente` e `em_processamento`.
 
-| Papel      | Permissões principais                                                                 |
-|------------|----------------------------------------------------------------------------------------|
-| **Admin**  | Acesso total: configurações, APIs, usuários, logs, mapeamento                         |
-| **Gestor** | Gestão de usuários, dashboard, mapeamento, consulta de pedidos + tudo do Operador     |
-| **Operador** | Ajuste de mapas (rota → saída), consulta de códigos pendentes e processados         |
+## Modelo de dados (resumo)
 
-## Mapeamento de Saídas
+- **Pedido**: codigo_principal, sigla, uf, filial, status
+- **Mapa**: criterio_roteamento (sigla \| uf \| filial), habilitado, quantidade_saidas
+- **MapeamentoRotaSaida**: UNIQUE (mapa_id, valor) → saida
+- **ConfirmacaoSorter**: dimensões, peso, saída
+- **Usuario**: roles admin \| gestor \| operador
 
-O gestor/operador configura:
+Schema: `database/init.sql` (+ `migrate_*.sql`). Alembic no `requirements.txt`, **sem** pasta `alembic/` (planejado).
 
-1. Quantidade de saídas físicas do sorter (1–100).  
-2. Cadastro de rotas (ex: SAO, CWB, RIO).  
-3. Associação **Rota → Número da Saída** (com prioridade).
+## Fluxo sorter
 
-A interface deve apresentar um mapa intuitivo para facilitar a programação das rotas.
+1. `POST /api/v1/sorter/consultar` com códigos separados por `;` (header `X-API-Key`)
+2. Service carrega pedidos e mapa ONLINE, monta entidades de domínio, chama `decidir_rota`
+3. Sucesso: `{ codigo, saida }`; conflito → 409; sem rota → 404
+4. `POST /api/v1/sorter/confirmar` grava aferição e notifica WMS (log de cada tentativa)
 
-## Segurança
+## Segurança e papéis
 
-- Endpoints de interface protegidos por **JWT Bearer Token**.  
-- Endpoints do sorter protegidos por **API Key** (`X-API-Key`).  
-- Senhas armazenadas com **bcrypt**.  
-- Logs de auditoria e de integração com o WMS.
+| Ação | Papel mínimo | Onde |
+|------|--------------|------|
+| Login JWT | — | `POST /api/v1/auth/login` |
+| Habilitar mapa ONLINE | operador | `POST /mapeamento/mapas/{id}/habilitar` |
+| Criar/editar mapa, mapeamento, desabilitar, config saídas | gestor | routers/mapeamento |
+| Excluir mapa OFFLINE | gestor/admin | `DELETE /mapeamento/mapas/{id}` |
+| Excluir pedido (`?force=`) | admin | `DELETE /api/v1/pedidos/{id}` |
+| Logs sorter / WMS | admin | `GET /api/v1/logs/...` |
+| Sorter consultar/confirmar | API Key | header `X-API-Key` |
+| Criar pedido (WMS) | **sem JWT** (protótipo) | `POST /api/v1/pedidos` |
 
-## Escalabilidade e Boas Práticas
+## Desempenho (referência acadêmica)
 
-- Código tipado (Pydantic + type hints).  
-- Separação clara de responsabilidades (routers → services → models).  
-- Logs estruturados de todas as operações do sorter.  
-- Schema PostgreSQL com índices nas colunas de busca frequente.  
-- Pronto para containerização (Docker Compose).
+Meta: consulta ≤ 1.000 ms (RNF-01); p95 ≤ 200 ms sob carga (RNF-07 / CA-09, Fase 5).  
+Índices em etiqueta e mapeamento; ver Decisões Técnicas Fase 2.

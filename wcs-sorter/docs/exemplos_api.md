@@ -8,11 +8,15 @@ curl -X POST http://localhost:8000/api/v1/auth/login \
   -d '{"username":"admin","password":"Admin@123"}'
 ```
 
+Use o `access_token` retornado como `Authorization: Bearer <token>` nas rotas da interface.
+
 ---
 
 ## 2. WMS → WCS: criar pedido
 
-O WMS envia **uma** etiqueta de rastreio por pedido:
+**Sem autenticação JWT** (entrada de integração no protótipo acadêmico).
+
+O WMS envia **uma** etiqueta de rastreio por pedido. O pedido é gravado com status **`pendente`**.
 
 ```bash
 curl -X POST http://localhost:8000/api/v1/pedidos \
@@ -20,7 +24,9 @@ curl -X POST http://localhost:8000/api/v1/pedidos \
   -d '{
     "codigo_externo": "NF-111111111111111",
     "etiqueta": "FFFF45678",
-    "rota_codigo": "SAO"
+    "rota_codigo": "SAO",
+    "sigla": "SAO",
+    "uf": "SP"
   }'
 ```
 
@@ -28,14 +34,55 @@ curl -X POST http://localhost:8000/api/v1/pedidos \
 |-------|-------------|
 | `codigo_externo` | ID no WMS (NF, pedido, etc.) |
 | `etiqueta` | Única etiqueta de rastreio do volume |
-| `rota_codigo` | Destino lógico (ex: SAO) |
+| `rota_codigo` / `sigla` / `uf` / `filial` | Destino conforme o critério do mapa ONLINE |
+
+### Reenvio (idempotência por `codigo_externo`)
+
+| Situação | HTTP | Efeito |
+|----------|------|--------|
+| Mesmo `codigo_externo` e status `recebido` ou `pendente` | **200** | Atualiza `sigla`, `uf`, `filial`, `rota_codigo`, `dados_originais` e `prioridade` |
+| Mesmo `codigo_externo` e status `em_processamento`, `separado`, `enviado_wms`, `erro` ou `cancelado` | **409** | Rejeita; motivo em `detail` e em `log_integracao_wms` (`tipo=rejeitado`, `sucesso=false`) |
+| Sem `codigo_externo` | **201** | Sempre cria um novo pedido |
+
+```bash
+# Primeiro envio → 201
+curl -i -X POST http://localhost:8000/api/v1/pedidos \
+  -H "Content-Type: application/json" \
+  -d '{"codigo_externo":"NF-111","etiqueta":"FFFF45678","sigla":"SAO"}'
+
+# Reenvio enquanto pendente → 200 (atualiza sigla)
+curl -i -X POST http://localhost:8000/api/v1/pedidos \
+  -H "Content-Type: application/json" \
+  -d '{"codigo_externo":"NF-111","etiqueta":"FFFF45678","sigla":"CWB"}'
+
+# Reenvio após separado/enviado_wms → 409
+curl -i -X POST http://localhost:8000/api/v1/pedidos \
+  -H "Content-Type: application/json" \
+  -d '{"codigo_externo":"NF-111","etiqueta":"FFFF45678","sigla":"FLN"}'
+```
 
 ---
 
-## 3. Sorter → WCS: consultar (leitura de todos os códigos da caixa)
+## 3. Excluir pedido (RF-12) — somente admin
 
-O sorter lê **todos** os códigos que encontrar na caixa e envia separados por `;`.
-O WCS identifica qual deles é a etiqueta de rastreio conhecida.
+```bash
+# Pendente: sem force
+curl -X DELETE "http://localhost:8000/api/v1/pedidos/{id}" \
+  -H "Authorization: Bearer <token-admin>"
+
+# Já separado/enviado_wms: exige force=true
+curl -X DELETE "http://localhost:8000/api/v1/pedidos/{id}?force=true" \
+  -H "Authorization: Bearer <token-admin>"
+```
+
+Remove o pedido, as etiquetas e as confirmações. Os registros de `log_integracao_wms` **são mantidos** (`pedido_id` fica nulo por `ON DELETE SET NULL`).
+
+---
+
+## 4. Sorter → WCS: consultar
+
+O sorter envia **todos** os códigos da caixa separados por `;`.  
+O domínio (`decidir_rota`) identifica a etiqueta válida e a saída do mapa ONLINE.
 
 ```bash
 curl -X POST http://localhost:8000/api/v1/sorter/consultar \
@@ -49,18 +96,13 @@ curl -X POST http://localhost:8000/api/v1/sorter/consultar \
 { "codigo": "FFFF45678", "saida": 1 }
 ```
 
-**Erro — nenhum código conhecido:** HTTP 404
+**Erro — nenhum código conhecido:** HTTP 404  
 
 **Erro — múltiplos destinos:** HTTP 409
-```json
-{
-  "detail": "Múltiplos destinos encontrados nos códigos lidos: etiquetas=[...], rotas=[...]"
-}
-```
 
 ---
 
-## 4. Sorter → WCS: confirmar separação
+## 5. Sorter → WCS: confirmar separação
 
 ```bash
 curl -X POST http://localhost:8000/api/v1/sorter/confirmar \
@@ -75,3 +117,17 @@ curl -X POST http://localhost:8000/api/v1/sorter/confirmar \
     "saida": 1
   }'
 ```
+
+Após gravar a confirmação, o WCS tenta o webhook (`WMS_WEBHOOK_URL`). Cada tentativa é registrada em `log_integracao_wms`.  
+Se a URL estiver vazia, a notificação é marcada como simulada com sucesso e o pedido pode ir para `enviado_wms`.
+
+---
+
+## 6. Habilitar mapa (operador, gestor ou admin)
+
+```bash
+curl -X POST http://localhost:8000/api/v1/mapeamento/mapas/1/habilitar \
+  -H "Authorization: Bearer <token>"
+```
+
+Desabilita os demais mapas na mesma operação. Apenas **gestor/admin** desabilitam explicitamente; gestor e admin excluem mapa OFFLINE.

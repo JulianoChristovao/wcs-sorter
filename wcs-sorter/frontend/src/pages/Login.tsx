@@ -16,11 +16,21 @@ export default function Login() {
     setLoading(true)
     try {
       await login(username, password)
-      navigate('/')
+      navigate('/', { replace: true })
     } catch (err: unknown) {
-      const msg =
-        (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ||
-        'Falha no login. Verifique usuário e senha.'
+      localStorage.removeItem('wcs_token')
+      localStorage.removeItem('wcs_user')
+      const detail = (err as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail
+      let msg = 'Usuário ou senha inválidos.'
+      if (typeof detail === 'string') {
+        msg = detail
+      } else if (Array.isArray(detail) && detail.length > 0) {
+        const first = detail[0] as { msg?: string; loc?: unknown[] }
+        const field = Array.isArray(first.loc) ? String(first.loc[first.loc.length - 1]) : ''
+        msg = first.msg
+          ? (field ? `${field}: ${first.msg}` : first.msg)
+          : 'Dados de login inválidos.'
+      }
       setError(msg)
     } finally {
       setLoading(false)

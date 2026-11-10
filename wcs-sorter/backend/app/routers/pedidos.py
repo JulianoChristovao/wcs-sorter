@@ -4,7 +4,7 @@ Router de Pedidos (entrada do WMS + consultas da interface).
 from typing import Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy import select, func, and_, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -13,9 +13,8 @@ from app.core.database import get_db
 from app.core.security import require_operador, require_gestor, require_admin
 from app.models.usuario import Usuario
 from app.models.pedido import Pedido, PedidoStatus, PedidoEtiqueta, ConfirmacaoSorter
-from app.models.log import LogIntegracaoWms
 from app.schemas.pedido import PedidoCreate, PedidoResponse, PedidoListResponse
-from app.services.wms_service import WmsService
+from app.services.wms_service import WmsService, PedidoJaProcessadoError
 
 router = APIRouter(prefix="/pedidos", tags=["Pedidos"])
 
@@ -64,6 +63,7 @@ def _to_response(pedido: Pedido, confirmacao: ConfirmacaoSorter | None = None) -
 )
 async def criar_pedido(
     payload: PedidoCreate,
+    response: Response,
     db: AsyncSession = Depends(get_db),
 ):
     service = WmsService(db)
@@ -79,10 +79,16 @@ async def criar_pedido(
         dados.update(payload.dados_extras)
 
     try:
-        pedido = await service.receber_pedido(dados)
+        pedido, atualizado = await service.receber_pedido(dados)
         await db.flush()
-        # Não acessar relacionamentos aqui (MissingGreenlet). Campos escalares já estão no objeto.
+        # Atualização de pedido existente (idempotência) → 200; criação → 201
+        if atualizado:
+            response.status_code = status.HTTP_200_OK
         return _to_response(pedido, confirmacao=None)
+    except PedidoJaProcessadoError as exc:
+        # Persiste o log de rejeição antes do rollback de get_db
+        await db.commit()
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
     except Exception as exc:
@@ -165,7 +171,7 @@ async def obter_pedido(
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Exclui pedido enviado pelo WMS",
     description=(
-        "Remove o pedido e dados relacionados (etiquetas, confirmações, logs de integração). "
+        "Remove o pedido, etiquetas e confirmações. Logs de integração são mantidos (pedido_id fica nulo). "
         "Não permite excluir se o status for 'separado' ou 'enviado_wms' (já processado), "
         "salvo com force=true."
     ),
@@ -194,8 +200,8 @@ async def excluir_pedido(
             ),
         )
 
-    # Remove dependências (logs, confirmações, etiquetas) antes do pedido
-    await db.execute(delete(LogIntegracaoWms).where(LogIntegracaoWms.pedido_id == pedido_id))
+    # Etiquetas e confirmações saem com o pedido (CASCADE / delete explícito).
+    # log_integracao_wms.pedido_id é ON DELETE SET NULL — a trilha permanece.
     await db.execute(delete(ConfirmacaoSorter).where(ConfirmacaoSorter.pedido_id == pedido_id))
     await db.execute(delete(PedidoEtiqueta).where(PedidoEtiqueta.pedido_id == pedido_id))
     await db.delete(pedido)

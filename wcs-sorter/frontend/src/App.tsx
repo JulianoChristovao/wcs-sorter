@@ -10,7 +10,7 @@ import Logs from './pages/Logs'
 import type { ReactNode } from 'react'
 
 function PrivateRoute({ children }: { children: ReactNode }) {
-  const { token, loading } = useAuth()
+  const { token, user, loading } = useAuth()
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center text-slate-500">
@@ -18,7 +18,7 @@ function PrivateRoute({ children }: { children: ReactNode }) {
       </div>
     )
   }
-  if (!token) return <Navigate to="/login" replace />
+  if (!token || !user) return <Navigate to="/login" replace />
   return <>{children}</>
 }
 

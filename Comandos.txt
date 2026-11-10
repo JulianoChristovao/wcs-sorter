@@ -3,6 +3,9 @@ docker compose up --build -d
 docker compose exec api python -m scripts.seed_admin
 
 cd frontend
+Remove-Item -Recurse -Force node_modules -ErrorAction SilentlyContinue
+Remove-Item -Force package-lock.json -ErrorAction SilentlyContinue
+npm cache clean --force
 npm install
 npm run dev
 
@@ -22,3 +25,8 @@ Value = sorter-api-key-change-me
 http://localhost:8000/docs#
 http://localhost:5173/login
 http://localhost:8000/health
+
+__________________________
+Teste de aceitação:
+sed -i 's/\$PY -c/python -c/g' scripts/teste_aceitacao.sh
+bash scripts/teste_aceitacao.sh

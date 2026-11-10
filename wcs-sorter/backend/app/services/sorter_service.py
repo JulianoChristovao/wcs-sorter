@@ -8,6 +8,8 @@ Regra de negócio:
   de pedido pendente e retorna esse código + a saída mapeada.
 - Se MAIS DE UM código corresponder a pedidos pendentes com destino,
   retorna ERRO (múltiplos destinos).
+
+A decisão de roteamento é delegada ao domínio (app.domain.decidir_rota).
 """
 import time
 from datetime import datetime, timezone
@@ -17,8 +19,11 @@ from sqlalchemy import select, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.domain.entities import Mapa as MapaDominio, Pedido as PedidoDominio
+from app.domain.errors import DomainError
+from app.domain.routing import decidir_rota
 from app.models.pedido import Pedido, PedidoEtiqueta, ConfirmacaoSorter, PedidoStatus
-from app.models.rota import MapeamentoRotaSaida, Rota, Saida
+from app.models.rota import MapeamentoRotaSaida, Saida, Mapa
 from app.models.log import LogSorter
 from app.schemas.sorter import (
     ConsultaEtiquetaRequest,
@@ -58,8 +63,7 @@ class SorterService:
             PedidoStatus.em_processamento,
         ]
 
-        # Busca pedidos pendentes cuja etiqueta de rastreio está entre os códigos lidos
-        # (via tabela pedido_etiquetas OU codigo_principal)
+        # Persistência: pedidos candidatos (adaptador → entidades de domínio)
         stmt = (
             select(Pedido)
             .outerjoin(PedidoEtiqueta, PedidoEtiqueta.pedido_id == Pedido.id)
@@ -76,71 +80,52 @@ class SorterService:
             .distinct()
         )
         result = await self.db.execute(stmt)
-        pedidos_encontrados = list(result.scalars().all())
+        pedidos_orm = list(result.scalars().all())
 
-        if not pedidos_encontrados:
+        mapa_dominio = await self._carregar_mapa_dominio()
+        pedidos_dominio = [self._pedido_para_dominio(p) for p in pedidos_orm]
+
+        try:
+            decisao = decidir_rota(codigos, pedidos_dominio, mapa_dominio)
+        except DomainError as exc:
             await self._log_sorter(
                 tipo="consulta",
                 payload_entrada=payload.model_dump(),
                 sucesso=False,
-                mensagem="Nenhuma etiqueta de rastreio conhecida entre os códigos lidos",
+                mensagem=str(exc),
                 tempo_ms=int((time.perf_counter() - inicio) * 1000),
             )
-            raise ValueError(
-                "Nenhuma etiqueta de rastreio conhecida entre os códigos lidos"
-            )
+            raise ValueError(str(exc)) from exc
 
-        # REGRA: mais de um pedido/destino encontrado = erro
-        if len(pedidos_encontrados) > 1:
-            codigos_match = [p.codigo_principal for p in pedidos_encontrados]
-            rotas = list({p.rota_codigo for p in pedidos_encontrados})
-            msg = (
-                f"Múltiplos destinos encontrados nos códigos lidos: "
-                f"etiquetas={codigos_match}, rotas={rotas}"
-            )
-            await self._log_sorter(
-                tipo="consulta",
-                payload_entrada=payload.model_dump(),
-                sucesso=False,
-                mensagem=msg,
-                tempo_ms=int((time.perf_counter() - inicio) * 1000),
-            )
-            raise ValueError(msg)
-
-        pedido = pedidos_encontrados[0]
-        codigo_encontrado = pedido.codigo_principal  # etiqueta de rastreio
-
-        # Resolve saída pelo mapa habilitado e critério (sigla/uf/filial)
-        saida_numero, valor_usado, criterio = await self._obter_saida_do_pedido(pedido)
-        if saida_numero is None:
-            msg = (
-                f"Sem mapeamento para {criterio}='{valor_usado}' no mapa habilitado"
-                if valor_usado
-                else (criterio or "Nenhum mapa habilitado ou valor de destino ausente no pedido")
-            )
-            await self._log_sorter(
-                tipo="consulta",
-                payload_entrada=payload.model_dump(),
-                codigo_encontrado=codigo_encontrado,
-                sucesso=False,
-                mensagem=msg,
-                tempo_ms=int((time.perf_counter() - inicio) * 1000),
-            )
-            raise ValueError(msg)
+        # Localiza o ORM correspondente para atualizar status
+        pedido = next(
+            (p for p in pedidos_orm if p.codigo_principal == decisao.codigo),
+            None,
+        )
+        if pedido is None:
+            # fallback: match por etiqueta associada
+            for p in pedidos_orm:
+                etqs = {p.codigo_principal}
+                etqs.update(e.codigo for e in (p.etiquetas or []))
+                if decisao.codigo in etqs:
+                    pedido = p
+                    break
+        if pedido is None:
+            raise ValueError("Pedido da decisão não encontrado na base")
 
         pedido.status = PedidoStatus.em_processamento
         pedido.processado_em = datetime.now(timezone.utc)
 
         response = ConsultaEtiquetaResponse(
-            codigo=codigo_encontrado, saida=saida_numero
+            codigo=decisao.codigo, saida=decisao.saida
         )
 
         await self._log_sorter(
             tipo="consulta",
             payload_entrada=payload.model_dump(),
             payload_saida=response.model_dump(),
-            codigo_encontrado=codigo_encontrado,
-            saida_retornada=saida_numero,
+            codigo_encontrado=decisao.codigo,
+            saida_retornada=decisao.saida,
             sucesso=True,
             tempo_ms=int((time.perf_counter() - inicio) * 1000),
         )
@@ -167,15 +152,14 @@ class SorterService:
                     ),
                 )
             )
-            .order_by(Pedido.created_at.desc())
         )
         result = await self.db.execute(stmt)
-        pedido = result.scalars().first()
+        pedido = result.scalar_one_or_none()
 
         if not pedido:
             await self._log_sorter(
                 tipo="confirmacao",
-                payload_entrada=payload.model_dump(),
+                payload_entrada=payload.model_dump(mode="json"),
                 sucesso=False,
                 mensagem="Pedido não encontrado ou já processado",
                 tempo_ms=int((time.perf_counter() - inicio) * 1000),
@@ -222,75 +206,49 @@ class SorterService:
 
         return response
 
-    async def _obter_saida_do_pedido(self, pedido) -> tuple[Optional[int], Optional[str], Optional[str]]:
-        """
-        Usa o mapa habilitado e seu critério (sigla|uf|filial)
-        para achar a saída a partir dos dados do pedido.
-        Retorna (saida_numero, valor_usado, criterio_ou_erro).
-        """
-        from app.models.rota import Mapa
+    def _pedido_para_dominio(self, pedido: Pedido) -> PedidoDominio:
+        etiquetas = [e.codigo for e in (pedido.etiquetas or []) if e.codigo]
+        return PedidoDominio(
+            codigo_principal=pedido.codigo_principal,
+            sigla=pedido.sigla,
+            uf=pedido.uf,
+            filial=pedido.filial,
+            etiquetas=etiquetas,
+            rota_codigo=pedido.rota_codigo,
+        )
 
-        result = await self.db.execute(select(Mapa).where(Mapa.habilitado.is_(True)))
-        mapa = result.scalar_one_or_none()
-        if not mapa:
-            return None, None, "Nenhum mapa habilitado"
+    async def _carregar_mapa_dominio(self) -> Optional[MapaDominio]:
+        result = await self.db.execute(
+            select(Mapa)
+            .where(Mapa.habilitado.is_(True))
+            .options(selectinload(Mapa.mapeamentos).selectinload(MapeamentoRotaSaida.saida))
+        )
+        mapa_orm = result.scalar_one_or_none()
+        if not mapa_orm:
+            return None
 
         criterio = (
-            mapa.criterio_roteamento.value
-            if hasattr(mapa.criterio_roteamento, "value")
-            else str(mapa.criterio_roteamento)
+            mapa_orm.criterio_roteamento.value
+            if hasattr(mapa_orm.criterio_roteamento, "value")
+            else str(mapa_orm.criterio_roteamento)
         )
-        valor = None
-        if criterio == "sigla":
-            valor = pedido.sigla or pedido.rota_codigo
-        elif criterio == "uf":
-            valor = pedido.uf
-        elif criterio == "filial":
-            valor = pedido.filial
-
-        if not valor:
-            return None, None, f"Pedido sem valor para critério '{criterio}'"
-
-        valor_norm = str(valor).strip()
-        stmt = (
-            select(Saida.numero)
-            .join(MapeamentoRotaSaida, MapeamentoRotaSaida.saida_id == Saida.id)
-            .where(
-                and_(
-                    MapeamentoRotaSaida.mapa_id == mapa.id,
-                    MapeamentoRotaSaida.valor.ilike(valor_norm),
-                    MapeamentoRotaSaida.ativo.is_(True),
-                    Saida.ativo.is_(True),
-                )
-            )
-            .order_by(MapeamentoRotaSaida.prioridade.asc())
-            .limit(1)
+        mapa = MapaDominio(
+            criterio=criterio,
+            habilitado=True,
+            nome=mapa_orm.nome or "",
         )
-        result = await self.db.execute(stmt)
-        saida = result.scalar_one_or_none()
-        return saida, valor_norm, criterio
-
-    async def _obter_saida_por_rota(self, rota_codigo: str) -> Optional[int]:
-        """Compatibilidade: busca valor == rota_codigo no mapa habilitado."""
-        from app.models.rota import Mapa
-
-        stmt = (
-            select(Saida.numero)
-            .join(MapeamentoRotaSaida, MapeamentoRotaSaida.saida_id == Saida.id)
-            .join(Mapa, Mapa.id == MapeamentoRotaSaida.mapa_id)
-            .where(
-                and_(
-                    MapeamentoRotaSaida.valor.ilike(rota_codigo),
-                    MapeamentoRotaSaida.ativo.is_(True),
-                    Saida.ativo.is_(True),
-                    Mapa.habilitado.is_(True),
-                )
-            )
-            .order_by(MapeamentoRotaSaida.prioridade.asc())
-            .limit(1)
-        )
-        result = await self.db.execute(stmt)
-        return result.scalar_one_or_none()
+        for m in mapa_orm.mapeamentos or []:
+            if not m.ativo:
+                continue
+            saida_num = m.saida.numero if m.saida is not None else None
+            if saida_num is None:
+                continue
+            try:
+                mapa.adicionar_mapeamento(m.valor, saida_num)
+            except DomainError:
+                # mapeamento inconsistente no banco: ignora duplicata divergente
+                continue
+        return mapa
 
     async def _log_sorter(
         self,

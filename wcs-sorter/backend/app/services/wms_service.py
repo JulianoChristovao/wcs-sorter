@@ -5,11 +5,16 @@ from datetime import datetime, timezone
 from typing import Any
 
 import httpx
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.models.pedido import Pedido, ConfirmacaoSorter, PedidoStatus, PedidoEtiqueta
 from app.models.log import LogIntegracaoWms
+
+
+class PedidoJaProcessadoError(Exception):
+    """Levantada quando codigo_externo já existe em status não editável."""
 
 
 def _norm(v: Any) -> str | None:
@@ -58,16 +63,67 @@ class WmsService:
         if sigla:
             sigla = sigla.upper()
 
+        codigo_externo = _norm(dados.get("codigo_externo"))
+        prioridade = int(dados.get("prioridade") or 5)
+        rota_norm = rota_codigo.upper() if rota_codigo else rota_codigo
+
+        # Idempotência por codigo_externo (sem UNIQUE no schema)
+        if codigo_externo:
+            # Pedidos legados podem ter o mesmo codigo_externo (sem UNIQUE).
+            # Usa o mais recente (created_at DESC) para evitar MultipleResultsFound.
+            result = await self.db.execute(
+                select(Pedido)
+                .where(Pedido.codigo_externo == codigo_externo)
+                .order_by(Pedido.created_at.desc())
+                .limit(1)
+            )
+            existente = result.scalars().first()
+            if existente:
+                editaveis = {PedidoStatus.recebido, PedidoStatus.pendente}
+                if existente.status in editaveis:
+                    existente.sigla = sigla
+                    existente.uf = uf
+                    existente.filial = filial
+                    existente.rota_codigo = rota_norm
+                    existente.dados_originais = dados
+                    existente.prioridade = prioridade
+                    self.db.add(
+                        LogIntegracaoWms(
+                            pedido_id=existente.id,
+                            tipo="atualizado",
+                            payload=dados,
+                            sucesso=True,
+                        )
+                    )
+                    await self.db.flush()
+                    return existente, True
+                else:
+                    motivo = (
+                        f"codigo_externo '{codigo_externo}' já existe com status "
+                        f"'{existente.status.value}' e não pode ser alterado"
+                    )
+                    self.db.add(
+                        LogIntegracaoWms(
+                            pedido_id=existente.id,
+                            tipo="rejeitado",
+                            payload=dados,
+                            sucesso=False,
+                            mensagem_erro=motivo,
+                        )
+                    )
+                    await self.db.flush()
+                    raise PedidoJaProcessadoError(motivo)
+
         pedido = Pedido(
-            codigo_externo=_norm(dados.get("codigo_externo")),
+            codigo_externo=codigo_externo,
             codigo_principal=etiqueta,
-            rota_codigo=rota_codigo.upper() if rota_codigo else rota_codigo,
+            rota_codigo=rota_norm,
             sigla=sigla,
             uf=uf,
             filial=filial,
             dados_originais=dados,
             status=PedidoStatus.pendente,
-            prioridade=int(dados.get("prioridade") or 5),
+            prioridade=prioridade,
         )
         self.db.add(pedido)
         await self.db.flush()
@@ -82,7 +138,7 @@ class WmsService:
                 sucesso=True,
             )
         )
-        return pedido
+        return pedido, False
 
     async def notificar_separacao_concluida(
         self, pedido: Pedido, confirmacao: ConfirmacaoSorter

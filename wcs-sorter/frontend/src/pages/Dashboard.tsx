@@ -100,7 +100,13 @@ export default function Dashboard() {
     )
   }
 
-  if (!kpis) return null
+  if (!kpis) {
+    return (
+      <div className="p-6">
+        <p className="text-red-600 text-sm">{error || 'Não foi possível carregar o dashboard.'}</p>
+      </div>
+    )
+  }
 
   return (
     <div className="space-y-6">

@@ -31,7 +31,9 @@ api.interceptors.request.use((config) => {
 api.interceptors.response.use(
   (res) => res,
   (error) => {
-    if (error.response?.status === 401) {
+    const url = String(error.config?.url || '')
+    const isLogin = url.includes('/auth/login')
+    if (error.response?.status === 401 && !isLogin) {
       localStorage.removeItem('wcs_token')
       localStorage.removeItem('wcs_user')
       if (!window.location.pathname.includes('/login')) {

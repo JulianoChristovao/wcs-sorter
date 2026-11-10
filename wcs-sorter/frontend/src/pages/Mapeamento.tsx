@@ -405,47 +405,44 @@ export default function MapeamentoPage() {
                 {m.habilitado ? 'ONLINE' : 'OFFLINE'}
               </span>
             </div>
-            {(isGestor || isAdmin) && (
-              <div className="mt-3 flex flex-wrap gap-2">
-                {isGestor && (
-                  !m.habilitado ? (
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        void handleHabilitar(m.id)
-                      }}
-                      className="text-xs bg-emerald-600 hover:bg-emerald-700 text-white px-2.5 py-1 rounded"
-                    >
-                      Habilitar
-                    </button>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        void handleDesabilitar(m.id)
-                      }}
-                      className="text-xs bg-slate-500 hover:bg-slate-600 text-white px-2.5 py-1 rounded"
-                    >
-                      Desabilitar
-                    </button>
-                  )
-                )}
-                {isGestor && !m.habilitado && (
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      void handleExcluirMapa(m.id, m.nome)
-                    }}
-                    className="text-xs bg-red-600 hover:bg-red-700 text-white px-2.5 py-1 rounded"
-                  >
-                    Excluir
-                  </button>
-                )}
-              </div>
-            )}
+            <div className="mt-3 flex flex-wrap gap-2">
+              {/* Operador, gestor e admin podem selecionar o mapa em uso (CA-07) */}
+              {!m.habilitado ? (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    void handleHabilitar(m.id)
+                  }}
+                  className="text-xs bg-emerald-600 hover:bg-emerald-700 text-white px-2.5 py-1 rounded"
+                >
+                  Habilitar
+                </button>
+              ) : isGestor ? (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    void handleDesabilitar(m.id)
+                  }}
+                  className="text-xs bg-slate-500 hover:bg-slate-600 text-white px-2.5 py-1 rounded"
+                >
+                  Desabilitar
+                </button>
+              ) : null}
+              {isGestor && !m.habilitado && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    void handleExcluirMapa(m.id, m.nome)
+                  }}
+                  className="text-xs bg-red-600 hover:bg-red-700 text-white px-2.5 py-1 rounded"
+                >
+                  Excluir
+                </button>
+              )}
+            </div>
           </button>
         ))}
         {mapas.length === 0 && !loading && (

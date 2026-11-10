@@ -123,9 +123,11 @@ async def atualizar_mapa(
 async def habilitar_mapa(
     mapa_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: Usuario = Depends(require_gestor),
+    current_user: Usuario = Depends(require_operador),
 ):
-    """Habilita este mapa e desabilita todos os outros. Só o habilitado direciona o sorter."""
+    """Habilita este mapa e desabilita todos os outros. Só o habilitado direciona o sorter.
+    Operador pode selecionar o mapa em uso (CA-07 / RF-10); não altera o mapeamento.
+    """
     result = await db.execute(select(Mapa).where(Mapa.id == mapa_id))
     mapa = result.scalar_one_or_none()
     if not mapa:

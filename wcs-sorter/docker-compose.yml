@@ -29,11 +29,18 @@ services:
       SORTER_API_KEY: sorter-api-key-change-me
       DEBUG: "true"
       CORS_ORIGINS: '["http://localhost:3000","http://localhost:5173","http://127.0.0.1:5173"]'
+      # Webhook de saída WCS → WMS (padrão vazio = notificação simulada)
+      WMS_WEBHOOK_URL: ${WMS_WEBHOOK_URL:-}
+      WMS_API_KEY: ${WMS_API_KEY:-}
     ports:
       - "8000:8000"
     depends_on:
       db:
         condition: service_healthy
+    # No Docker Desktop, host.docker.internal já resolve o host.
+    # No Linux, descomente a linha abaixo para o container alcançar um mock no host (ex.: SoapUI :8089).
+    # extra_hosts:
+    #   - "host.docker.internal:host-gateway"
     volumes:
       - ./backend/app:/app/app:ro
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
