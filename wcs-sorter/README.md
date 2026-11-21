@@ -46,35 +46,56 @@ Documentação: [`docs/arquitetura.md`](docs/arquitetura.md) · [`docs/exemplos_
 
 ## Como Executar
 
+Guia completo, na ordem que funciona em outro PC: `docs/funcionamento.md`.
+
 ### Pré-requisitos
-- Docker e Docker Compose
+- Docker Desktop em execução
+- Node.js 18+ (só para a interface)
 
-### Subir o ambiente
+Não instale Python nem PostgreSQL no Windows. Eles sobem no Docker.
 
-```bash
-cd wcs-sorter
+### 1. Pasta certa
+
+Entre na pasta que contém `docker-compose.yml` (`dir` deve listar esse arquivo, `backend` e `frontend`).
+
+### 2. API e banco
+
+```powershell
+docker compose down -v
 docker compose up --build -d
+docker compose ps
 ```
 
-Após os containers subirem, crie o usuário administrador:
+Espere `wcs_postgres` **healthy** e `wcs_api` **Up**. Depois:
 
-```bash
+```powershell
 docker compose exec api python -m scripts.seed_admin
 ```
 
-A API estará disponível em: **http://localhost:8000**
+### 3. Interface (outro terminal, mesma pasta)
 
-- Documentação interativa (Swagger): http://localhost:8000/docs  
-- ReDoc: http://localhost:8000/redoc  
-- Health check: http://localhost:8000/health  
+```powershell
+cd frontend
+npm install
+npm run dev
+```
+
+Se o `npm install` falhar, limpe e repita (comandos em `docs/funcionamento.md`).
+
+### Endereços
+
+- Interface: http://localhost:5173/login
+- Swagger: http://localhost:8000/docs
+- Health: http://localhost:8000/health
 
 ### Credenciais padrão
 
-| Usuário | Senha      | Papel  |
-|---------|------------|--------|
-| admin   | Admin@123  | Admin  |
+| Uso | Valor |
+|-----|--------|
+| Interface | `admin` / `Admin@123` |
+| Sorter (`X-API-Key`) | `sorter-api-key-change-me` |
 
-> **Importante:** Altere a senha e as chaves secretas em produção.
+> Altere a senha e as chaves se for para produção.
 
 ---
 
@@ -196,19 +217,21 @@ Schema: criado por `database/init.sql` (+ scripts `migrate_*.sql`). Alembic cons
 
 ## Testes
 
-Regras de roteamento (domínio) sem PostgreSQL e sem container:
+A instalação da aplicação **não** usa `pip install` no Windows. API e banco sobem pelo Docker (seção Como Executar).
+
+Os testes de domínio não precisam do `requirements.txt` (o `psycopg2` não tem pacote para Python 3.14 e o pip falha). Só o pytest:
 
 ```bash
 cd backend
-pip install -r requirements.txt
-PYTHONPATH=. pytest tests/domain -q
+python -m pip install pytest
+PYTHONPATH=. python -m pytest tests/domain -q
 ```
 
-Saída esperada (executada neste ambiente):
+Saída esperada:
 
 ```
-.........                                                                [100%]
-10 passed in ~2.5s
+..........                                                               [100%]
+10 passed
 ```
 
 Os dez testes cobrem etiqueta válida, conflito de destinos, ausência de rota, remapeamento (mesmo objeto), unicidade de valor→saída, um mapa ONLINE, critério sigla/uf/filial, roteamento por UF e o repositório em memória.
@@ -217,13 +240,18 @@ Os dez testes cobrem etiqueta válida, conflito de destinos, ausência de rota, 
 
 ## Frontend (Interface Web)
 
-```bash
+Na pasta do `docker-compose.yml`, em outro terminal:
+
+```powershell
 cd frontend
+Remove-Item -Recurse -Force node_modules -ErrorAction SilentlyContinue
+Remove-Item -Force package-lock.json -ErrorAction SilentlyContinue
+npm cache clean --force
 npm install
 npm run dev
 ```
 
-Abra **http://localhost:5173** (API na porta 8000).
+Abra **http://localhost:5173/login** (API na porta 8000).
 
 Login: `admin` / `Admin@123`
 

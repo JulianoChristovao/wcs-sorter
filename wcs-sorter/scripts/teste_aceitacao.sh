@@ -34,13 +34,17 @@ SORTER_KEY="${SORTER_API_KEY:-sorter-api-key-change-me}"
 PASS=0
 FAIL=0
 
-# Git Bash no Windows costuma ter só "python"; Linux/macOS usam "python3"
-if command -v python3 >/dev/null 2>&1; then
-  PY=python3
-elif command -v python >/dev/null 2>&1; then
-  PY=python
-else
-  echo "ERRO: python3 ou python não encontrado no PATH." >&2
+# No Windows o "python3" da Microsoft Store existe no PATH mas não roda.
+# Usa o primeiro interpretador que realmente importa json.
+PY=""
+for cand in python python3 py; do
+  if command -v "$cand" >/dev/null 2>&1 && "$cand" -c "import json" >/dev/null 2>&1; then
+    PY="$cand"
+    break
+  fi
+done
+if [ -z "$PY" ]; then
+  echo "ERRO: nenhum Python funcional no PATH (python/python3/py)." >&2
   exit 1
 fi
 
